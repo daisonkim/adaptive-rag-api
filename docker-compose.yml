@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # vLLM 서버 - Kanana Nano 2.1B Instruct 모델
+  vllm-server:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-kanana-server
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ports:
+      - "8001:8000"
+    command: >
+      --model kakaocorp/kanana-nano-2.1b-instruct
+      --host 0.0.0.0
+      --port 8000
+      --tensor-parallel-size 1
+      --max-model-len 8192
+      --gpu-memory-utilization 0.9
+      --trust-remote-code
+    ipc: host
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # FastAPI RAG 서비스
+  adaptive-rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: adaptive-rag-api-service
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - VLLM_SERVER_URL=http://vllm-server:8000
+      - CUDA_VISIBLE_DEVICES=1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./chroma:/app/chroma
+    depends_on:
+      vllm-server:
+        condition: service_healthy
+    networks:
+      - rag-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  rag-network:
+    driver: bridge 
