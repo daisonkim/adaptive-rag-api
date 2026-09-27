@@ -1,0 +1,197 @@
+---
+# ConfigMap for RAG API configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adaptive-rag-api-config
+  namespace: default
+data:
+  VLLM_SERVER_URL: "http://vllm-server:8000"
+  LOG_LEVEL: "INFO"
+  CUDA_VISIBLE_DEVICES: "1"
+
+---
+# Service for vLLM server (내부 통신용)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-server
+  namespace: default
+spec:
+  selector:
+    app: vllm-server
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+# Service for RAG API (외부 접근용)
+apiVersion: v1
+kind: Service
+metadata:
+  name: adaptive-rag-api
+  namespace: default
+spec:
+  selector:
+    app: adaptive-rag-api
+  ports:
+    - name: api
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+      nodePort: 30000
+  type: LoadBalancer
+---
+# Deployment for vLLM server (GPU node)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-server
+  template:
+    metadata:
+      labels:
+        app: vllm-server
+    spec:
+      nodeSelector:
+        nodepool-name: gpu1
+      containers:
+        - name: vllm-server
+          image: vllm/vllm-openai:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+          resources:
+            requests:
+              nvidia.com/mig-3g.40gb: 1
+              memory: "16Gi"
+              cpu: "6"
+            limits:
+              nvidia.com/mig-3g.40gb: 1
+              memory: "32Gi"
+              cpu: "10"
+          args:
+            - "--model"
+            - "kakaocorp/kanana-nano-2.1b-instruct"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--tensor-parallel-size"
+            - "1"
+            - "--max-model-len"
+            - "8192"
+            - "--gpu-memory-utilization"
+            - "0.9"
+            - "--trust-remote-code"
+          volumeMounts:
+            - name: huggingface-cache
+              mountPath: /root/.cache/huggingface
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: huggingface-cache
+          emptyDir:
+            sizeLimit: 50Gi
+---
+# Deployment for RAG API (GPU node - 로컬 ChromaDB 데이터 직접 사용)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adaptive-rag-api
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adaptive-rag-api
+  template:
+    metadata:
+      labels:
+        app: adaptive-rag-api
+    spec:
+      nodeSelector:
+        nodepool-name: gpu1
+      containers:
+        - name: adaptive-rag-api
+          image: adaptive-rag-api:latest
+          imagePullPolicy: Never  # Local image
+          ports:
+            - containerPort: 8000
+          env:
+            - name: VLLM_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: adaptive-rag-api-config
+                  key: VLLM_SERVER_URL
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: adaptive-rag-api-config
+                  key: LOG_LEVEL
+            - name: CUDA_VISIBLE_DEVICES
+              valueFrom:
+                configMapKeyRef:
+                  name: adaptive-rag-api-config
+                  key: CUDA_VISIBLE_DEVICES
+          resources:
+            requests:
+              nvidia.com/mig-3g.40gb: 1
+              memory: "8Gi"
+              cpu: "4"
+            limits:
+              nvidia.com/mig-3g.40gb: 1
+              memory: "16Gi"
+              cpu: "6"
+          volumeMounts:
+            - name: chroma-data
+              mountPath: /app/chroma
+            - name: huggingface-cache
+              mountPath: /root/.cache/huggingface
+            - name: logs
+              mountPath: /app/logs
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: chroma-data
+          hostPath:
+            path: /data2/dskim/test/chroma
+            type: Directory
+        - name: huggingface-cache
+          emptyDir:
+            sizeLimit: 30Gi
+        - name: logs
+          emptyDir:
+            sizeLimit: 5Gi 
