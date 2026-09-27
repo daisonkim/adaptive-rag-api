@@ -1,0 +1,51 @@
+[project]
+name = "adaptive-rag-api"
+version = "0.1.0"
+description = "IT 기술 뉴스 기반 적응형 RAG API"
+readme = "README.md"
+# torch==2.3.0 / numpy==1.26.4 휠이 3.12까지만 제공되어 3.14+ 컨벤션 대신 3.12로 고정
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # RAG
+    "langchain==0.3.27",
+    "langchain-core==0.3.72",
+    "langchain-community==0.3.27",
+    "langchain-huggingface==0.3.1",
+    "langchain-experimental==0.3.4",
+    "langchain-chroma==0.2.5",
+    "langgraph==0.6.3",
+    "chromadb==1.0.15",
+    "unstructured==0.18.11",
+    "sentence-transformers==2.7.0",
+    "transformers==4.45.0",
+    "torch==2.3.0",
+    "numpy==1.26.4",
+    "pandas==2.2.2",
+    "tqdm==4.66.4",
+    "datasets==4.0.0",
+    "requests==2.32.4",
+    # API
+    "fastapi==0.115.12",
+    "uvicorn[standard]==0.32.1",
+    "pydantic==2.10.4",
+    "python-multipart==0.0.20",
+]
+
+[dependency-groups]
+dev = ["ruff", "pyright", "pytest", "pytest-cov", "pre-commit"]
+
+[build-system]
+requires = ["uv_build>=0.9.2,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
+ignore = ["E501"]  # formatter가 처리
+
+[tool.pyright]
+executionEnvironments = [{ root = "src" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-q", "--cov=src"]
